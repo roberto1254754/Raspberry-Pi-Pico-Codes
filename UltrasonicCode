@@ -1,0 +1,52 @@
+#include <stdio.h>   
+#include "pico/stdlib.h"
+
+#define Triger 18
+#define Echo   19
+
+float Distancia(void);
+float measure;
+
+int main()
+{
+  set_sys_clock_khz(133000, true);
+  stdio_init_all();
+
+  gpio_set_function(Triger,GPIO_FUNC_SIO);
+  gpio_set_drive_strength(Triger,GPIO_DRIVE_STRENGTH_8MA);
+  gpio_set_dir(Triger,GPIO_OUT);
+  gpio_put(Triger,0);
+
+  gpio_set_function(Echo,GPIO_FUNC_SIO);
+  gpio_set_dir(Echo,GPIO_IN);
+  gpio_pull_up(Echo);
+  
+
+
+  while (1)
+  {
+    measure = Distancia();
+    printf("Distancia = %1.3f \r", measure);
+    busy_wait_ms(500);
+    
+  }
+
+}
+
+
+float Distancia(void){
+   int Time, Tarjet;
+
+   gpio_put(Triger,true);
+   busy_wait_us(10);
+   gpio_put(Triger,false);
+      while(!gpio_get(Echo));
+   Time = timer_hw->timerawl;
+   Tarjet = Time + 12000;
+   
+   while(gpio_get(Echo))
+   {
+    if(timer_hw->timerawl>Tarjet) return 0;
+   }
+    Time = timer_hw->timerawl-Time;
+       return ((float)(Time*333))/2000000.0; }
