@@ -1,0 +1,750 @@
+// Librerias
+#include "hardware/pwm.h"
+#include <math.h>
+#include <stdio.h>
+#include "pico/stdlib.h"
+#include "pico/float.h"
+#include "hardware/adc.h"
+#include "pico/multicore.h"
+
+#include "LED/LedRGB.h"
+
+#define kp 13.21
+#define ki 0.24
+
+// Intervalo de tiempo para las interrupciones de las alarmas
+#define Alarm1_10ms 10000     // tiempo de alarma 1
+#define time_mov 2500000      // tiempo de movimiento
+#define Alarm2_100ms 100000   // tiempo de refrescamiento de LEDS
+#define Alarm2_250ms 250000   //intervalo de tiempo para la Lectura del sensor ultrasonico
+
+// constantes para el Seguidor de línea
+#define Alarm2_ADC_3ms 3000
+#define Vsam 3.3 / (4096 * 4)
+#define kp_s 87
+#define ki_s 0.25
+#define Kd_s 4
+
+//volatile float Sensor0, Sensor1, Sensor2;
+//>>>>>>>>>>>>>>>>>>Sensores opticoa>>>>>>>>>>>
+#define Sensor0 26 //Izquierda
+#define Sensor1 27 //Central
+#define Sensor2 28 //Derecha
+
+//Ultrasónico
+#define Triger 16
+#define Echo   17
+
+//Terminal de slaida para la tira de LEDs
+#define LED 15
+
+// Funciones e Interrupciones
+void ISR_gpio_handler(void);
+void ISR_Alarm0_handler(void);
+void ISR_LEDs_handler(void);
+void ISR_UltraSonic_handler(void);
+void mainTwo(void);
+unsigned paro;
+unsigned paroStandby;
+
+// Variables para PWM
+volatile int contador;
+volatile int contador2;
+volatile int contador3;
+volatile int contador4;
+volatile float Velocidad;
+volatile float Velocidad2;
+volatile float Velocidad3;
+volatile float Velocidad4;
+
+volatile char pasos_sec = 0;
+volatile char Flag = 0;
+volatile float RPS = 0.0;
+volatile float RPS2 = 0.0;
+volatile float RPS3 = 0.0;
+volatile float RPS4 = 0.0;
+// Para RPS
+volatile float A_RPS = 0.0;
+volatile float AVG_RPS[5];
+volatile char i = 0;
+volatile float A_RPS2 = 0.0;
+volatile float AVG_RPS2[5];
+volatile char i2 = 0;
+volatile float A_RPS3 = 0.0;
+volatile float AVG_RPS3[5];
+volatile char i3 = 0;
+volatile float A_RPS4 = 0.0;
+volatile float AVG_RPS4[5];
+volatile char i4 = 0;
+
+volatile int npwm1;
+volatile int npwm2;
+volatile int npwm3;
+volatile int npwm4;
+volatile float nuevavel = 0.0;
+volatile float nuevavel2 = 0.0;
+volatile float nuevavel3 = 0.0;
+volatile float nuevavel4 = 0.0;
+volatile float error;
+volatile float error2;
+volatile float error3;
+volatile float error4;
+
+// Target de Velocidad
+float Target_FD = 0.15;
+float Target_FI = 0.15;
+float Target_TD = 0.15;
+float Target_TI = 0.15;
+
+// Control PI
+
+volatile float error0 = 0.0;
+volatile float errint = 0.0;
+volatile float error0_2 = 0.0;
+volatile float errint_2 = 0.0;
+volatile float error0_3 = 0.0;
+volatile float errint_3 = 0.0;
+volatile float error0_4 = 0.0;
+volatile float errint_4 = 0.0;
+volatile float u;
+volatile float u2;
+volatile float u3;
+volatile float u4;
+volatile float left;
+volatile float rigth;
+
+float Distancia(void);
+float measure;
+volatile unsigned int UltraS;
+volatile float Distance;
+
+unsigned int SS0, SS1, SS2; //Almacenan el estado de los sensores opticos 
+
+//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<
+volatile float sum_max = 7.6;
+volatile float error_s = 0;
+volatile float errint_s = 0;
+volatile float errderiv_s = 0;
+volatile float error0_s = 0;
+volatile float u_s = 0;
+volatile float Flag_s = 0;
+volatile float sum_norm = 0;
+volatile float temp_muestra = 0.003;
+volatile int contador_s = 0;
+volatile float lx = 0.095, ly = 0.1;
+volatile float inv_r = 1 / 0.0425;
+volatile float r = 0.0425;
+volatile float VyD, VyI;
+
+//Color red intensities
+volatile int R_intensity1;
+volatile int R_intensity2;
+volatile int R_intensity3;
+volatile int R_intensity4;
+
+//Color green intensities
+volatile int G_intensity1;
+volatile int G_intensity2;
+volatile int G_intensity3;
+volatile int G_intensity4;
+
+//Color blue intensities 
+volatile int B_intensity1;
+volatile int B_intensity2;
+volatile int B_intensity3;
+volatile int B_intensity4;
+
+void FollowerCases(){
+     
+        SS0 = gpio_get(Sensor0);
+        SS1 = gpio_get(Sensor1);
+        SS2 = gpio_get(Sensor2);
+
+///////////////////////////Movimientos hacia y+ (Derecha del carro)/////////////////////////////////
+  while(paro)
+  {
+          Target_FI = 0;
+          Target_FD = 0;
+          Target_TI = 0;
+          Target_TD = 0;
+          pwm_set_chan_level(0, 0, 0);
+          pwm_set_chan_level(0, 1, 0);
+          pwm_set_chan_level(1, 0, 0);
+          pwm_set_chan_level(1, 1, 0);
+          pwm_set_chan_level(2, 0, 0);
+          pwm_set_chan_level(2, 1, 0);
+          pwm_set_chan_level(3, 0, 0);
+          pwm_set_chan_level(3, 1, 0);
+
+  }  
+
+  while (!gpio_get(19))
+  {
+          Target_FI = 0;
+          Target_FD = 0;
+          Target_TI = 0;
+          Target_TD = 0;
+          pwm_set_chan_level(0, 0, 0);
+          pwm_set_chan_level(0, 1, 0);
+          pwm_set_chan_level(1, 0, 0);
+          pwm_set_chan_level(1, 1, 0);
+          pwm_set_chan_level(2, 0, 0);
+          pwm_set_chan_level(2, 1, 0);
+          pwm_set_chan_level(3, 0, 0);
+          pwm_set_chan_level(3, 1, 0);
+  }
+  
+
+        if (!SS0 && !SS1 && !SS2)
+        { // Caso 0: Gira sobre su propio Eje
+          // Ajusta las velocidades dependiendo de los casos. 
+          Target_FI = 0.2;
+          Target_FD = -0.2;
+          Target_TI = 0.2;
+          Target_TD = -0.2;
+        }
+
+        if (!SS0 && !SS1 && SS2)
+        { // Caso 1: Gira hacia y+ (Derecha del carro) de manera fuerte y sirve para curvas fuertes
+          // Ajusta las velocidades dependiendo de los casos. 
+          Target_FI = 0.1;
+          Target_FD = -0.3;
+          Target_TI = 0.1;
+          Target_TD = -0.3;
+        }
+
+        if (!SS0 && SS1 && !SS2)
+        { // Caso 2: Se mueve derecho hacia x+, este caso es cuando los sensores laterales fallan
+          // Ajusta las velocidades dependiendo de los casos. 
+          Target_FI = 0.15;
+          Target_FD = 0.15;
+          Target_TI = 0.15;
+          Target_TD = 0.15;
+        }
+
+        if (!SS0 && SS1 && SS2)
+        { // Caso 3: Gira hacia y+ (Derecha del carro) de manera tranquila y es para curvas suaves
+          // Ajusta las velocidades dependiendo de los casos. 
+          Target_FI = 0.3;
+          Target_FD = 0.0;
+          Target_TI = 0.3;
+          Target_TD = 0.0;
+        }
+
+        ///////////////////////////////Movimientos hacia y- (Izquierda del carro)/////////////////////////////////////////////////////
+
+        if (SS0 && !SS1 && !SS2)
+        { // Caso 4: Gira hacia y- (Izquierda del carro) de manera fuerte y sirve para curvas fuertes
+          // Ajusta las velocidades dependiendo de los casos. 
+          Target_FI = -0.3;
+          Target_FD = 0.1;
+          Target_TI = -0.3;
+          Target_TD = 0.1;
+        }
+
+        if (SS0 && !SS1 && SS2)
+        { // Caso 5: Se mueve derecho hacia x+, este caso es cuando el sensor central falla
+          // Ajusta las velocidades dependiendo de los casos. 
+          Target_FI = 0.15;
+          Target_FD = 0.15;
+          Target_TI = 0.15;
+          Target_TD = 0.15;
+        }
+
+        if (SS0 && SS1 && !SS2)
+        { // Caso 6: Gira hacia y- (Izquierda del carro) de manera tranquila y sirve para curvas suaves
+          // Ajusta las velocidades dependiendo de los casos. 
+          Target_FI = 0.0;
+          Target_FD = 0.3;
+          Target_TI = 0.0;
+          Target_TD = 0.3;
+        }
+
+        if (SS0 && SS1 && SS2)
+        { // Caso 7: Se mueve derecho hacia x+, este es el caso principal donde los 3 sensores detectan la linea y no fallan
+          // Ajusta las velocidades dependiendo de los casos. 
+          Target_FI = 0.15;
+          Target_FD = 0.15;
+          Target_TI = 0.15;
+          Target_TD = 0.15;
+        }
+}
+
+//////////////////////////////////////Inicia el main ////////////////////////////////////////////////////
+int main()
+{
+  set_sys_clock_khz(133000, true);
+  stdio_usb_init();
+
+  multicore_reset_core1();
+  multicore_launch_core1(mainTwo);
+
+////////////////////Configuracion de las terminales de entrada de los sensores opticos  
+  gpio_set_function(Sensor0, GPIO_FUNC_SIO);
+  gpio_set_dir(Sensor0, GPIO_IN);
+  gpio_pull_up(Sensor0);
+  gpio_set_function(Sensor1, GPIO_FUNC_SIO);
+  gpio_set_dir(Sensor1, GPIO_IN);
+  gpio_pull_up(Sensor1);
+  gpio_set_function(Sensor2, GPIO_FUNC_SIO);
+  gpio_set_dir(Sensor2, GPIO_IN);
+  gpio_pull_up(Sensor2);
+
+  /////////////////////////////////////Interrupciones Externas//////////////////////////////////////////
+  irq_set_exclusive_handler(IO_IRQ_BANK0, &ISR_gpio_handler);
+  irq_set_priority(IO_IRQ_BANK0, 2);
+  irq_set_enabled(IO_IRQ_BANK0, true);
+  gpio_set_irq_enabled(12, GPIO_IRQ_EDGE_FALL, true);
+  gpio_set_irq_enabled(13, GPIO_IRQ_EDGE_FALL, true);
+  gpio_set_irq_enabled(10, GPIO_IRQ_EDGE_FALL, true);
+  gpio_set_irq_enabled(11, GPIO_IRQ_EDGE_FALL, true);
+
+  ////////////////////////////////////////Configuracion de interrupción/////////////////////////////////////////
+  hw_set_bits(&timer_hw->inte, 1 << 1 | 1 << 0);
+  irq_set_exclusive_handler(TIMER_IRQ_0, &ISR_Alarm0_handler);   // Set irq handler for alarm0 irq
+  irq_set_priority(TIMER_IRQ_0, 1);
+  irq_set_enabled(TIMER_IRQ_0, true);                       // Enable the alarm0 irq
+    timer_hw->alarm[0] = timer_hw->timerawl + Alarm1_10ms;    // Load initial time to alarm 0
+
+  ////////////////////////////////////////Entradas para los encoders/////////////////////////////////////////////
+
+
+
+  // Señal encoder Delantero Derecho
+  gpio_init(12);
+  gpio_set_dir(12, GPIO_IN);
+  gpio_pull_up(12);
+
+  // Señal encoder Delantero Izquierdo
+  gpio_init(13);
+  gpio_set_dir(13, GPIO_IN);
+  gpio_pull_up(13);
+  // Señal encoder Trasero derecho
+  gpio_init(10);
+  gpio_set_dir(10, GPIO_IN);
+  gpio_pull_up(10);
+  // Señal encoder Trasero izquierdo
+  gpio_init(11);
+  gpio_set_dir(11, GPIO_IN);
+  gpio_pull_up(11);
+
+  //StandBy
+  gpio_init(19);                          
+  gpio_set_dir(19, GPIO_IN);            
+  gpio_pull_up(19);
+
+  /////////////////////////////////////////////////Slidas del PWM //////////////////////////////////
+
+  // PWM Delantero Derecho
+  gpio_set_function(0, GPIO_FUNC_PWM);
+  gpio_set_dir(0, GPIO_OUT);
+  gpio_pull_up(0);
+  gpio_set_function(1, GPIO_FUNC_PWM);
+  gpio_set_dir(1, GPIO_OUT);
+  gpio_pull_up(1);
+  // PWM Delantero Izquierdo
+  gpio_set_function(2, GPIO_FUNC_PWM);
+  gpio_set_dir(2, GPIO_OUT);
+  gpio_pull_up(2);
+  gpio_set_function(3, GPIO_FUNC_PWM);
+  gpio_set_dir(3, GPIO_OUT);
+  gpio_pull_up(3);
+  // PWM Trasero derecho
+  gpio_set_function(4, GPIO_FUNC_PWM);
+  gpio_set_dir(4, GPIO_OUT);
+  gpio_pull_up(4);
+  gpio_set_function(5, GPIO_FUNC_PWM);
+  gpio_set_dir(5, GPIO_OUT);
+  gpio_pull_up(5);
+  // PWM Trasero izquierdo
+  gpio_set_function(6, GPIO_FUNC_PWM);
+  gpio_set_dir(6, GPIO_OUT);
+  gpio_pull_up(6);
+  gpio_set_function(7, GPIO_FUNC_PWM);
+  gpio_set_dir(7, GPIO_OUT);
+  gpio_pull_up(7);
+  ///////////////////////////////////////////////Configuracion de PWM///////////////////////////////////////////
+  pwm_set_phase_correct(0, true);
+  pwm_set_output_polarity(0, 0, 0);
+
+  pwm_set_phase_correct(1, true);
+  pwm_set_output_polarity(1, 0, 0);
+
+  pwm_set_phase_correct(2, true);
+  pwm_set_output_polarity(1, 0, 0);
+
+  pwm_set_phase_correct(3, true);
+  pwm_set_output_polarity(1, 0, 0);
+
+  // Definición del número de divisiones del PWM
+  // IT
+  pwm_set_clkdiv(0, 1);  // Setting the Clock divider (1.0 to 256.xxx)
+  pwm_set_wrap(0, 3325); // Setting the TOP register (Wrap time)
+  pwm_set_chan_level(0, 0, 3315);
+  // ID
+  pwm_set_clkdiv(1, 1);  // Setting the Clock divider (1.0 to 256.xxx)
+  pwm_set_wrap(1, 3325); // Setting the TOP register (Wrap time)
+  pwm_set_chan_level(1, 1, 3320);
+  // DT
+  pwm_set_clkdiv(2, 1);  // Setting the Clock divider (1.0 to 256.xxx)
+  pwm_set_wrap(2, 3325); // Setting the TOP register (Wrap time)
+  pwm_set_chan_level(2, 0, 3310);
+  // DD
+  pwm_set_clkdiv(3, 1);  // Setting the Clock divider (1.0 to 256.xxx)
+  pwm_set_wrap(3, 3325); // Setting the TOP register (Wrap time)
+  pwm_set_chan_level(3, 1, 3325);
+
+  // Activar los canales PWM
+  pwm_set_enabled(0, true);
+  pwm_set_enabled(1, true);
+  pwm_set_enabled(2, true);
+  pwm_set_enabled(3, true);
+
+  while (1)
+  {
+    
+    if (Flag == 1) // Espera la la finalización del ISR del Timer
+    { //algoritmo para el control de velocidad.
+      contador_s++;
+      Flag = 0;
+      //printf("Si entra el control\n");
+      // Errores
+      error = (fabs(Target_FD) - nuevavel)/0.33;
+      error2 = (fabs(Target_FI) - nuevavel2)/0.33;
+      error3 = (fabs(Target_TD) - nuevavel3)/0.33;
+      error4 = (fabs(Target_TI) - nuevavel4)/0.33;
+      // Algoritmo 1 FD
+      errint = errint + error;
+      u = kp * error + ki * errint;
+      error0 = error;
+      if (u > 1)
+      {
+        u = 1;
+      }
+      if (u < 0)
+      {
+        u = 0;
+        error0 = -kp * error;
+      }
+      // Algoritmo 2 FI
+      errint_2 = errint_2 + error2;
+      u2 = kp * error2 + ki * errint_2;
+      error0_2 = error2;
+      if (u2 > 1)
+      {
+        u2 = 1;
+      }
+      if (u2 < 0)
+      {
+        u2 = 0;
+        error0_2 = -kp * error2;
+      }
+      // Algoritmo 3 TD
+      errint_3 = errint_3 + error3;
+      u3 = kp * error3 + ki * errint_3;
+      error0_3 = error3;
+      if (u3 > 1)
+      {
+        u3 = 1;
+      }
+      if (u3 < 0)
+      {
+        u3 = 0;
+        error0_3 = -kp * error3;
+      }
+      // Algoritmo 4 TI
+      errint_4 = errint_4 + error4;
+      u4 = kp * error4 + ki * errint_4;
+      error0_4 = error4;
+      if (u4 > 1)
+      {
+        u4 = 1;
+      }
+      if (u4 < 0)
+      {
+        u4 = 0;
+        error0_4 = -kp * error4;
+      }
+      npwm1 = (int)u * 3270;
+      npwm2 = (int)u2 * 3320;
+      npwm3 = (int)u3 * 3290;
+      npwm4 = (int)u4 * 3325;
+
+      if(Target_FD>0)
+      {
+      pwm_set_chan_level(0, 0, npwm1);
+      pwm_set_chan_level(0, 1, 0);
+      }
+      else
+      {
+      pwm_set_chan_level(0, 0, 0);
+      pwm_set_chan_level(0, 1, npwm1);
+      }
+
+
+      if(Target_FI>0)
+      {
+      pwm_set_chan_level(1, 0, npwm2);
+      pwm_set_chan_level(1, 1, 0);
+      }
+      else
+      {
+      pwm_set_chan_level(1, 0, 0);
+      pwm_set_chan_level(1, 1, npwm2);
+      }
+
+
+      if(Target_TD>0)
+      {
+      pwm_set_chan_level(2, 0, npwm3);
+      pwm_set_chan_level(2, 1, 0);
+      }
+      else 
+      {
+      pwm_set_chan_level(2, 0, 0);
+      pwm_set_chan_level(2, 1, npwm3);
+      }
+
+
+      if(Target_TI>0)
+      {
+      pwm_set_chan_level(3, 0, npwm4);
+      pwm_set_chan_level(3, 1, 0);
+      }
+      else
+      {
+      pwm_set_chan_level(3, 0, 0);
+      pwm_set_chan_level(3, 1, npwm4);
+      }
+      Flag = 0;
+   }  //Fin del algoritmo de control de velocidad
+
+  FollowerCases();
+
+  } //Termina while(1)
+}// Termina el main
+/////////////////////////////////////////////Interruociones del encoder//////////////////////////////////////////
+void ISR_gpio_handler(void)
+{
+  if (gpio_get_irq_event_mask(12))
+  {
+    contador++;
+    gpio_acknowledge_irq(12, GPIO_IRQ_EDGE_FALL);
+  }
+  if (gpio_get_irq_event_mask(13))
+  {
+    contador2++;
+    gpio_acknowledge_irq(13, GPIO_IRQ_EDGE_FALL);
+  }
+  if (gpio_get_irq_event_mask(10))
+  {
+    contador3++;
+    gpio_acknowledge_irq(10, GPIO_IRQ_EDGE_FALL);
+  }
+  if (gpio_get_irq_event_mask(11))
+  {
+    contador4++;
+    gpio_acknowledge_irq(11, GPIO_IRQ_EDGE_FALL);
+  }
+}
+//////////////////////////////////////////////////////Interrupcion de Control  PI//////////////////////////////////////////
+void ISR_Alarm0_handler(void)
+{
+  timer_hw->alarm[0] = timer_hw->timerawl + Alarm1_10ms; // Create the new time target
+  hw_clear_bits(&timer_hw->intr, 1 << 0);                // Clear the alarm0 irq
+
+  if (!contador)
+  {
+    Velocidad = 0;
+    RPS = 0;
+    Flag = 1;
+    //printf("No cuenta el encoder\n");
+  }
+  // Medir RPS 1 y Velocidad 1
+  else {
+    AVG_RPS[i++] = (float)contador * 0.06939;
+    contador = 0;
+    RPS = (AVG_RPS[0] + AVG_RPS[1] + AVG_RPS[2] + AVG_RPS[3] + AVG_RPS[4]) / 5;
+    RPS = (RPS + A_RPS) / 2;
+    A_RPS = RPS;
+    Velocidad = RPS * 0.2669;
+    nuevavel = Velocidad / 0.36;
+    Flag = 1;
+    if(i == 4)  i = 0;
+  }
+
+  if (!contador2)
+  {
+    Velocidad2 = 0;
+    RPS2 = 0;
+    Flag = 1;
+  }
+  else
+  {
+    // Medir RPS 2 y Velocidad 2
+    AVG_RPS2[i2++] = (float)contador2 * 0.06939;
+    contador2 = 0;
+    A_RPS2 = (AVG_RPS2[0] + AVG_RPS2[1] + AVG_RPS2[2] + AVG_RPS2[3] + AVG_RPS2[4]) / 5;
+    RPS2 = (RPS2 + A_RPS2) / 2;
+    A_RPS2 = RPS2;
+    Velocidad2 = RPS2 * 0.2669;
+    nuevavel2 = Velocidad2 / 0.36;
+    Flag = 1;
+    if (i2 == 4)
+    {
+      i2 = 0;
+    }
+  }
+
+  if (!contador3)
+  {
+    Velocidad3 = 0;
+    RPS3 = 0;
+    Flag = 1;
+  }
+  else
+  {
+    // Medir RPS 3 y Velocidad 3
+    AVG_RPS3[i3++] = (float)contador3 *  0.06939;
+    contador3 = 0;
+    A_RPS3 = (AVG_RPS3[0] + AVG_RPS3[1] + AVG_RPS3[2] + AVG_RPS3[3] + AVG_RPS3[4]) / 5;
+    RPS3 = (RPS3 + A_RPS3) / 2;
+    A_RPS3 = RPS3;
+    Velocidad3 = RPS3 * 0.2669;
+    nuevavel3 = Velocidad3 / 0.36;
+    Flag = 1;
+    if (i3 == 4)
+    {
+      i3 = 0;
+    }
+  }
+
+  if (!contador4)
+  {
+    Velocidad4 = 0;
+    RPS4 = 0;
+    Flag = 1;
+  }
+  else
+  {
+    // Medir RPS 4 y Velocidad 4
+    AVG_RPS4[i4++] = (float)contador4 * 0.06939;
+    contador4 = 0;
+    A_RPS4 = (AVG_RPS4[0] + AVG_RPS4[1] + AVG_RPS4[2] + AVG_RPS4[3] + AVG_RPS4[4]) / 5;
+    RPS4 = (RPS4 + A_RPS4) / 2;
+    A_RPS4 = RPS4;
+    Velocidad4 = RPS4 *  0.2669;
+    nuevavel4 = Velocidad4 / 0.36;
+    Flag = 1;
+    if (i4 == 4)
+    {
+      i4 = 0;
+    }
+  }
+}
+
+void mainTwo(void){  //Esta codigo corre en el core 1
+  hw_set_bits(&timer_hw->inte, 1<<2 | 1 << 1 | 1 << 0);
+  irq_set_exclusive_handler(TIMER_IRQ_1, &ISR_UltraSonic_handler); // Set irq handler for alarm1 irq       // Enable the interrupt alarm1 and alarm0
+  irq_set_priority(TIMER_IRQ_1, 2);                         // Set priority for alarm1                     // Enable the alarm0 irq
+  irq_set_enabled(TIMER_IRQ_1, true);                       // Enable the alarm1 irq
+  timer_hw->alarm[1] = timer_hw->timerawl + Alarm2_250ms; // Tiempo de lectura del sensor ultrasonico
+
+  irq_set_exclusive_handler(TIMER_IRQ_2, &ISR_LEDs_handler); // Set irq handler for alarm1 irq       // Enable the interrupt alarm1 and alarm0
+  irq_set_priority(TIMER_IRQ_2, 3);                         // Set priority for alarm1                     // Enable the alarm0 irq
+  irq_set_enabled(TIMER_IRQ_2, true);                       // Enable the alarm1 irq
+  timer_hw->alarm[2] = timer_hw->timerawl + Alarm2_100ms; // Tiempo para la actualizaciòn de la tira de Leds
+
+  gpio_set_function(Triger,GPIO_FUNC_SIO);          //Terminal Triger del sensor Ultrasonico
+  gpio_set_drive_strength(Triger,GPIO_DRIVE_STRENGTH_8MA);
+  gpio_set_dir(Triger,GPIO_OUT);
+  gpio_put(Triger,0);
+
+  gpio_set_function(Echo,GPIO_FUNC_SIO);
+  gpio_set_dir(Echo,GPIO_IN);
+  gpio_pull_up(Echo);
+
+  gpio_set_function(LED, GPIO_FUNC_SIO);
+  gpio_set_dir(LED, GPIO_OUT);
+  gpio_put(LED, 0);
+  
+
+  while (1)
+  {
+    if (UltraS)  //Es habilitada cada 250ms despues de ler la distacia con el sensor ultrasonico
+    {
+      measure = Distancia();
+      if(measure<0.20) paro=1;
+      else paro =0;
+
+      printf("Distancia = %1.3f \r", measure);
+
+      UltraS = 0;
+    }
+    
+  }
+
+
+}
+
+void ISR_UltraSonic_handler(void){
+  timer_hw->alarm[1] = timer_hw->timerawl + Alarm2_250ms; // Create the new time target
+  hw_clear_bits(&timer_hw->intr, 1 << 1);                // Clear the alarm0 irq
+  Distance = Distancia();
+  UltraS = 1;
+}
+
+float Distancia(void){
+   int Time, Tarjet;
+
+   gpio_put(Triger,true);
+   busy_wait_us(10);
+   gpio_put(Triger,false);
+      while(!gpio_get(Echo));
+   Time = timer_hw->timerawl;
+   Tarjet = Time + 12000;
+   
+   while(gpio_get(Echo))
+   {
+    if(timer_hw->timerawl>Tarjet) return 15;
+   }
+    Time = timer_hw->timerawl-Time;
+    return ((float)(Time*333))/2000000.0;
+}
+
+void ISR_LEDs_handler(void){
+    static unsigned int i;
+  hw_clear_bits(&timer_hw->intr, 1 << 2);      // Clear the alarm0 irq
+  timer_hw->alarm[2] = timer_hw->timerawl + Alarm2_100ms; // Create the new time target
+  //printf("Entran los LEDS\n");
+
+  int numLEDs = 50; // Número máximo de LEDs
+
+  // Define el número de LEDs en cada grupo
+  int ledsInGroup = 5;
+
+  for (int j = 0; j < numLEDs; j++) {
+    int diff = (j - i + numLEDs) % numLEDs; // Diferencia circular entre el LED actual y el contador
+    int group = diff / ledsInGroup; // Calcular el grupo en función de la diferencia
+
+    switch (group) {
+      case 0:
+        RGB_LED(LED, R_intensity4, G_intensity4, B_intensity4); // Primer grupo de LEDs
+        break;
+      case 1:
+        RGB_LED(LED, R_intensity3, G_intensity3, B_intensity3); // Segundo grupo de LEDs
+        break;
+      case 2:
+        RGB_LED(LED, R_intensity2, G_intensity2, B_intensity2); // Tercer grupo de LEDs
+        break;
+      case 3:
+        RGB_LED(LED, R_intensity1, G_intensity1, B_intensity1); // Cuarto grupo de LEDs
+        break;
+      default:
+        RGB_LED(LED, 0, 0, 0); // Quinto grupo de LEDs
+        break;
+    }
+  }
+
+  if (i++ == numLEDs - 1) i = 0; // Mover los grupos de LEDs
+}
