@@ -1,0 +1,182 @@
+#include <stdio.h>
+#include "pico/stdlib.h"
+
+ extern "C" {
+    extern inline void RGB_LED(int PIN, int R, int G, int B);
+} 
+
+// Define constants
+#define GPIO15 15
+#define LED GPIO15
+#define Alarm1_us 15000
+#define sensor1 0
+#define sensor2 1
+#define sensor3 2
+#define sensor4 3
+
+// Color red intensities
+volatile int R_intensity1;
+volatile int R_intensity2;
+volatile int R_intensity3;
+volatile int R_intensity4;
+
+// Color green intensities
+volatile int G_intensity1;
+volatile int G_intensity2;
+volatile int G_intensity3;
+volatile int G_intensity4;
+
+// Color blue intensities
+volatile int B_intensity1;
+volatile int B_intensity2;
+volatile int B_intensity3;
+volatile int B_intensity4;
+
+void My_ISR_Alarm0_handler(void);
+
+volatile unsigned char i;
+
+void initializeLEDs() {
+  gpio_set_dir(LED, GPIO_OUT);
+  gpio_put(LED, 0);
+  gpio_set_function(LED, GPIO_FUNC_SIO);
+  hw_set_bits(&timer_hw->inte, 1 << 0);
+  irq_set_exclusive_handler(TIMER_IRQ_0, &My_ISR_Alarm0_handler);
+  irq_set_enabled(TIMER_IRQ_0, true);
+  timer_hw->alarm[0] = timer_hw->timerawl + Alarm1_us;
+}
+
+void initializesensors() {
+  gpio_init(sensor1);
+  gpio_init(sensor2);
+  gpio_init(sensor3);
+  gpio_init(sensor4);
+
+  gpio_set_dir(sensor1, GPIO_IN);
+  gpio_set_dir(sensor2, GPIO_IN);
+  gpio_set_dir(sensor3, GPIO_IN);
+  gpio_set_dir(sensor4, GPIO_IN);
+
+  gpio_pull_up(sensor1);
+  gpio_pull_up(sensor2);
+  gpio_pull_up(sensor3);
+  gpio_pull_up(sensor4);
+}
+
+#include "LobotServoController/LobotServoController.hpp"
+
+ LobotServoController MyRobot;
+
+void checkAndPerformAction() {
+  // Always active blue color
+  R_intensity3 = 0;
+  G_intensity3 = 0;
+  B_intensity3 = 255;
+
+  if (gpio_get(sensor1) == 0) {  // Tarima detectada en el carro
+    R_intensity1 = 255;
+    G_intensity1 = 4;
+    B_intensity1 = 4;
+    R_intensity2 = 255;
+    G_intensity2 = 20;
+    B_intensity2 = 20;
+    R_intensity4 = 255;
+    G_intensity4 = 100;
+    B_intensity4 = 100;
+  }
+
+  if (gpio_get(sensor2) == 0) {  // Zona StandBy
+    R_intensity1 = 0;
+    G_intensity1 = 255;
+    B_intensity1 = 0;
+    R_intensity2 = 10;
+    G_intensity2 = 255;
+    B_intensity2 = 10;
+    R_intensity4 = 35;
+    G_intensity4 = 255;
+    B_intensity4 = 35;
+  }
+
+  if (gpio_get(sensor4) == 0) {  // LLegó a Zona de Carga
+    R_intensity1 = 255;
+    G_intensity1 = 150;
+    B_intensity1 = 0;
+    R_intensity2 = 255;
+    G_intensity2 = 100;
+    B_intensity2 = 0;
+    R_intensity3 = 255;
+    G_intensity3 = 50;
+    B_intensity3 = 0;
+    busy_wait_ms(5000);
+    MyRobot.runActionGroup(1,1);  //One action run No.1 group
+    busy_wait_ms(35000);
+  }
+
+  if (gpio_get(sensor3) == 0) {  // Zona de Descarga
+    R_intensity1 = 255;
+    G_intensity1 = 150;
+    B_intensity1 = 0;
+    R_intensity2 = 255;
+    G_intensity2 = 150;
+    B_intensity2 = 0;
+    R_intensity4 = 255;
+    G_intensity4 = 150;
+    B_intensity4 = 0;
+  }
+
+  // Check if none of the sensors are pressed, then set the blue color
+  if (gpio_get(sensor1) && gpio_get(sensor2) && gpio_get(sensor3) && gpio_get(sensor4)) {
+    R_intensity1 = 0;
+    G_intensity1 = 0;
+    B_intensity1 = 255;
+    R_intensity2 = 35;
+    G_intensity2 = 35;
+    B_intensity2 = 255;
+    R_intensity4 = 100;
+    G_intensity4 = 100;
+    B_intensity4 = 255;
+  }
+}
+
+
+void My_ISR_Alarm0_handler(void) {
+  hw_clear_bits(&timer_hw->intr, 1 << 0);
+  timer_hw->alarm[0] = timer_hw->timerawl + Alarm1_us;
+
+  int numLEDs = 50;
+  int ledsInGroup = 5;
+
+  for (int j = 0; j < numLEDs; j++) {
+    int diff = (j - i + numLEDs) % numLEDs;
+    int group = diff / ledsInGroup;
+
+    switch (group) {
+      case 0:
+        RGB_LED(LED, R_intensity4, G_intensity4, B_intensity4);
+        break;
+      case 1:
+        RGB_LED(LED, R_intensity3, G_intensity3, B_intensity3);
+        break;
+      case 2:
+        RGB_LED(LED, R_intensity2, G_intensity2, B_intensity2);
+        break;
+      case 3:
+        RGB_LED(LED, R_intensity1, G_intensity1, B_intensity1);
+        break;
+      default:
+        RGB_LED(LED, 0, 0, 0);
+        break;
+    }
+  }
+
+  if (i++ == numLEDs - 1) i = 0;
+}
+
+int main() {
+  initializesensors();
+  initializeLEDs();
+
+  while (1) {
+    checkAndPerformAction();
+  }
+}
